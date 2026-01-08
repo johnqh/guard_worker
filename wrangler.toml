@@ -1,0 +1,22 @@
+# Cloudflare Worker configuration
+name = "guard-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-30"
+
+# Environment variables (non-secret)
+[vars]
+FROM_EMAIL = "security@sudobility.com"
+
+# App registry - maps app names to notification emails
+# Add new apps here: APP_<APPNAME>_EMAIL
+APP_MAIL_BOX_WALLET_EMAIL = "support@sudobility.com"
+APP_MAIL_BOX_EMAIL = "support@sudobility.com"
+
+# Secrets (set via `wrangler secret put SENDGRID_API_KEY`)
+# SENDGRID_API_KEY = "SG.xxxxx"
+
+# Optional: Custom domain routing
+# [routes]
+# routes = [
+#   { pattern = "guard.signic.email/*", zone_name = "signic.email" }
+# ]
