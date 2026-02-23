@@ -1,6 +1,6 @@
 {
   "name": "guard_worker",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,10 +8,21 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "verify": "bun run typecheck && bun run test"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@eslint/js": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "prettier": "^3.0.0",
     "typescript": "^5.7.2",
     "vitest": "^3.2.4",
     "wrangler": "^3.99.0"

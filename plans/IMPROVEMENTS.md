@@ -2,24 +2,24 @@
 
 ## Priority 1: Code Quality
 
-### 1.1 Add `userAgent` to email template
+### 1.1 Add `userAgent` to email template ✅
 - **File**: `src/index.ts`
 - **Issue**: The `SecurityAlert` interface accepts a `userAgent` field, but `formatSecurityAlertEmail()` does not render it. The data is silently discarded.
 - **Fix**: Add a conditional field in the email template for `userAgent`, similar to how `appVersion` is handled.
 
-### 1.2 Add lint and typecheck scripts
+### 1.2 Add lint and typecheck scripts ✅
 - **File**: `package.json`
 - **Issue**: Unlike other projects in the ecosystem, there are no `lint`, `typecheck`, or `verify` scripts. TypeScript checking only happens implicitly during `wrangler dev` or `wrangler deploy`.
 - **Fix**: Add scripts: `"typecheck": "tsc --noEmit"`, `"lint": "eslint src/"`, `"verify": "bun run typecheck && bun run test"`. Add ESLint as a dev dependency.
 
-### 1.3 Extract email template to separate module
+### 1.3 Extract email template to separate module ✅
 - **File**: `src/index.ts`
 - **Issue**: The single-file architecture makes the HTML email template hard to maintain. The template string is ~50 lines of HTML mixed with TypeScript logic.
 - **Fix**: Consider extracting `formatSecurityAlertEmail()` and `escapeHtml()` to a `src/email.ts` module. This preserves the simple architecture while improving maintainability.
 
 ## Priority 2: Reliability
 
-### 2.1 Add request body size limit
+### 2.1 Add request body size limit ✅
 - **Issue**: No limit on incoming request body size. A malicious actor could send extremely large payloads.
 - **Fix**: Add a check on `Content-Length` header or read the body with a size limit before parsing JSON.
 
@@ -27,7 +27,7 @@
 - **Issue**: No rate limiting on alert or CSP report endpoints. A misconfigured client or attacker could flood the worker with requests, consuming SendGrid quota.
 - **Fix**: Use Cloudflare's Rate Limiting or a simple in-memory counter with KV storage to limit requests per app per time window.
 
-### 2.3 Validate alert payload structure
+### 2.3 Validate alert payload structure ✅
 - **File**: `src/index.ts`
 - **Issue**: `handleSecurityAlert()` casts the parsed JSON directly to `SecurityAlert` without validation. Missing or malformed fields (e.g., non-string `url`, missing `timestamp`) could cause unexpected behavior.
 - **Fix**: Add runtime validation for required fields (appName, type, url, hostname, timestamp) with appropriate error responses.

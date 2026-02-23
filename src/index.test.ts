@@ -16,13 +16,19 @@ const createMockEnv = (overrides = {}) => ({
 const createMockRequest = (
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  headers?: Record<string, string>,
 ): Request => {
   const url = `https://guard.example.com${path}`;
   const options: RequestInit = { method };
   if (body) {
     options.body = JSON.stringify(body);
-    options.headers = { 'Content-Type': 'application/json' };
+    options.headers = {
+      'Content-Type': 'application/json',
+      ...headers,
+    };
+  } else if (headers) {
+    options.headers = headers;
   }
   return new Request(url, options);
 };
@@ -45,7 +51,9 @@ describe('Security Guard Worker', () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain(
+        'POST',
+      );
     });
 
     it('should reject non-POST methods', async () => {
@@ -53,6 +61,43 @@ describe('Security Guard Worker', () => {
       const response = await worker.fetch(request, createMockEnv());
 
       expect(response.status).toBe(405);
+    });
+  });
+
+  describe('Request body size limit', () => {
+    it('should reject requests with Content-Length exceeding 100KB', async () => {
+      const request = createMockRequest(
+        'POST',
+        '/alert',
+        { appName: 'test' },
+        {
+          'Content-Length': String(200 * 1024),
+        },
+      );
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(413);
+      expect(data.error).toBe('Payload too large');
+    });
+
+    it('should allow requests with Content-Length within limit', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'unauthorized_fetch',
+        url: 'https://malicious.com/api',
+        hostname: 'malicious.com',
+        timestamp: Date.now(),
+      };
+
+      const request = createMockRequest('POST', '/alert', alert, {
+        'Content-Length': String(50 * 1024),
+      });
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
     });
   });
 
@@ -87,7 +132,7 @@ describe('Security Guard Worker', () => {
       const data = await response.json();
 
       expect(response.status).toBe(400);
-      expect(data.error).toBe('Missing appName');
+      expect(data.error).toBe('appName must be a non-empty string');
     });
 
     it('should reject alerts for unknown apps', async () => {
@@ -125,6 +170,133 @@ describe('Security Guard Worker', () => {
     });
   });
 
+  describe('Alert payload validation', () => {
+    it('should reject alert with empty appName', async () => {
+      const alert = {
+        appName: '',
+        type: 'unauthorized_fetch',
+        url: 'https://malicious.com/api',
+        hostname: 'malicious.com',
+        timestamp: Date.now(),
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('appName must be a non-empty string');
+    });
+
+    it('should reject alert with invalid type', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'invalid_type',
+        url: 'https://malicious.com/api',
+        hostname: 'malicious.com',
+        timestamp: Date.now(),
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toContain('type must be one of');
+    });
+
+    it('should reject alert with missing url', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'unauthorized_fetch',
+        hostname: 'malicious.com',
+        timestamp: Date.now(),
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('url must be a string');
+    });
+
+    it('should reject alert with missing hostname', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'unauthorized_fetch',
+        url: 'https://malicious.com/api',
+        timestamp: Date.now(),
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('hostname must be a string');
+    });
+
+    it('should reject alert with non-numeric timestamp', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'unauthorized_fetch',
+        url: 'https://malicious.com/api',
+        hostname: 'malicious.com',
+        timestamp: 'not-a-number',
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('timestamp must be a number');
+    });
+
+    it('should reject alert with missing timestamp', async () => {
+      const alert = {
+        appName: 'mail_box',
+        type: 'unauthorized_fetch',
+        url: 'https://malicious.com/api',
+        hostname: 'malicious.com',
+      };
+
+      const request = createMockRequest('POST', '/alert', alert);
+      const response = await worker.fetch(request, createMockEnv());
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('timestamp must be a number');
+    });
+
+    it('should accept all valid alert types', async () => {
+      const validTypes = [
+        'unauthorized_fetch',
+        'unauthorized_xhr',
+        'unauthorized_websocket',
+        'csp_violation',
+      ];
+
+      for (const type of validTypes) {
+        const alert = {
+          appName: 'mail_box',
+          type,
+          url: 'https://malicious.com/api',
+          hostname: 'malicious.com',
+          timestamp: Date.now(),
+        };
+
+        const request = createMockRequest('POST', '/alert', alert);
+        const response = await worker.fetch(request, createMockEnv());
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.success).toBe(true);
+      }
+    });
+  });
+
   describe('CSP Report endpoint', () => {
     it('should handle valid CSP reports with appName query param', async () => {
       const report = {
@@ -135,7 +307,11 @@ describe('Security Guard Worker', () => {
         },
       };
 
-      const request = createMockRequest('POST', '/csp-report?appName=mail_box', report);
+      const request = createMockRequest(
+        'POST',
+        '/csp-report?appName=mail_box',
+        report,
+      );
       const response = await worker.fetch(request, createMockEnv());
 
       expect(response.status).toBe(204);

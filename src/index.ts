@@ -7,6 +7,12 @@
  * configurable app registry defined in wrangler.toml environment variables.
  */
 
+import {
+  formatSecurityAlertEmail,
+  VALID_ALERT_TYPES,
+  type SecurityAlert,
+} from './email';
+
 /** Environment bindings for the Cloudflare Worker. */
 interface Env {
   /** SendGrid API key for sending email notifications. Set via `wrangler secret put`. */
@@ -15,28 +21,6 @@ interface Env {
   FROM_EMAIL: string;
   /** Dynamic app registry: APP_<APPNAME>_EMAIL entries for routing alerts. */
   [key: string]: string;
-}
-
-/** Security alert payload sent by client-side interceptors. */
-interface SecurityAlert {
-  /** Name of the application that generated the alert. */
-  appName: string;
-  /** Type of security violation detected. */
-  type: 'unauthorized_fetch' | 'unauthorized_xhr' | 'unauthorized_websocket' | 'csp_violation';
-  /** The URL that was blocked or flagged. */
-  url: string;
-  /** Hostname extracted from the blocked URL. */
-  hostname: string;
-  /** Unix timestamp (ms) when the alert was generated. */
-  timestamp: number;
-  /** Optional stack trace from the interceptor. */
-  stack?: string;
-  /** Optional application version string. */
-  appVersion?: string;
-  /** Optional user agent string from the browser. */
-  userAgent?: string;
-  /** Optional additional context as key-value pairs. */
-  metadata?: Record<string, unknown>;
 }
 
 /** CSP violation report payload as sent by browsers. */
@@ -56,6 +40,9 @@ interface CspReport {
     'line-number'?: number;
   };
 }
+
+/** Maximum allowed request body size in bytes (100 KB). */
+const MAX_REQUEST_BODY_SIZE = 100 * 1024;
 
 // CORS headers for cross-origin requests
 const corsHeaders = {
@@ -88,6 +75,21 @@ export default {
       });
     }
 
+    // Check request body size limit
+    const contentLength = request.headers.get('Content-Length');
+    if (contentLength && parseInt(contentLength, 10) > MAX_REQUEST_BODY_SIZE) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Payload too large',
+        }),
+        {
+          status: 413,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -111,34 +113,80 @@ export default {
         {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+        },
       );
     }
   },
 };
 
 /**
+ * Validate that a value is a non-empty string.
+ *
+ * @param value - The value to check.
+ * @returns True if the value is a string with at least one character.
+ */
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Validate a security alert payload at runtime.
+ *
+ * Checks that all required fields are present and have the correct types.
+ *
+ * @param payload - The parsed JSON payload to validate.
+ * @returns An error message string if invalid, or null if valid.
+ */
+function validateAlertPayload(payload: Record<string, unknown>): string | null {
+  if (!isNonEmptyString(payload.appName)) {
+    return 'appName must be a non-empty string';
+  }
+  if (
+    !isNonEmptyString(payload.type) ||
+    !VALID_ALERT_TYPES.includes(payload.type as SecurityAlert['type'])
+  ) {
+    return `type must be one of: ${VALID_ALERT_TYPES.join(', ')}`;
+  }
+  if (typeof payload.url !== 'string') {
+    return 'url must be a string';
+  }
+  if (typeof payload.hostname !== 'string') {
+    return 'hostname must be a string';
+  }
+  if (typeof payload.timestamp !== 'number') {
+    return 'timestamp must be a number';
+  }
+  return null;
+}
+
+/**
  * Handle security alerts from client-side interceptors.
  *
- * Parses the alert JSON body, resolves the recipient email from the app
- * registry, formats an HTML email, and sends it via SendGrid.
+ * Parses the alert JSON body, validates the payload, resolves the recipient
+ * email from the app registry, formats an HTML email, and sends it via SendGrid.
  *
  * @param request - The incoming POST request containing a SecurityAlert JSON body.
  * @param env - Environment bindings with app registry and SendGrid credentials.
  * @returns JSON response with `{ success: boolean }` and appropriate status code.
  */
-async function handleSecurityAlert(request: Request, env: Env): Promise<Response> {
-  const alert: SecurityAlert = await request.json();
+async function handleSecurityAlert(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const payload: Record<string, unknown> = await request.json();
 
-  if (!alert.appName) {
+  const validationError = validateAlertPayload(payload);
+  if (validationError) {
     return new Response(
-      JSON.stringify({ success: false, error: 'Missing appName' }),
+      JSON.stringify({ success: false, error: validationError }),
       {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      },
     );
   }
+
+  const alert = payload as unknown as SecurityAlert;
 
   const recipient = getRecipientEmail(alert.appName, env);
   if (!recipient) {
@@ -148,7 +196,7 @@ async function handleSecurityAlert(request: Request, env: Env): Promise<Response
       {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      },
     );
   }
 
@@ -158,13 +206,10 @@ async function handleSecurityAlert(request: Request, env: Env): Promise<Response
     html: formatSecurityAlertEmail(alert),
   });
 
-  return new Response(
-    JSON.stringify({ success: emailSent }),
-    {
-      status: emailSent ? 200 : 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    }
-  );
+  return new Response(JSON.stringify({ success: emailSent }), {
+    status: emailSent ? 200 : 500,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
 }
 
 /**
@@ -179,12 +224,17 @@ async function handleSecurityAlert(request: Request, env: Env): Promise<Response
  * @param url - Parsed URL of the request (for query parameter extraction).
  * @returns 204 No Content response (required by CSP reporting spec).
  */
-async function handleCspReport(request: Request, env: Env, url: URL): Promise<Response> {
+async function handleCspReport(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
   const report: CspReport = await request.json();
   const cspData = report['csp-report'];
 
   // Get appName from query param or try to infer from document-uri
-  const appName = url.searchParams.get('appName') || inferAppName(cspData['document-uri']);
+  const appName =
+    url.searchParams.get('appName') || inferAppName(cspData['document-uri']);
 
   if (!appName) {
     console.warn('CSP report without appName:', cspData);
@@ -290,7 +340,7 @@ function extractHostname(urlString: string): string {
  */
 async function sendEmail(
   env: Env,
-  options: { to: string; subject: string; html: string }
+  options: { to: string; subject: string; html: string },
 ): Promise<boolean> {
   if (!env.SENDGRID_API_KEY) {
     console.error('SENDGRID_API_KEY not configured');
@@ -317,96 +367,4 @@ async function sendEmail(
   }
 
   return true;
-}
-
-/**
- * Format a security alert as a styled HTML email.
- *
- * Generates a full HTML document with inline CSS containing alert details.
- * All user-supplied values are passed through `escapeHtml()` to prevent XSS.
- *
- * @param alert - The security alert data to format.
- * @returns Complete HTML document string ready for email delivery.
- */
-function formatSecurityAlertEmail(alert: SecurityAlert): string {
-  const timestamp = new Date(alert.timestamp).toISOString();
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: #dc2626; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
-    .content { background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px; }
-    .field { margin-bottom: 12px; }
-    .label { font-weight: 600; color: #6b7280; font-size: 12px; text-transform: uppercase; }
-    .value { font-family: monospace; background: #e5e7eb; padding: 8px 12px; border-radius: 4px; word-break: break-all; }
-    .stack { font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow: auto; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2 style="margin: 0;">Security Alert</h2>
-      <p style="margin: 8px 0 0 0; opacity: 0.9;">${alert.type.replace(/_/g, ' ').toUpperCase()}</p>
-    </div>
-    <div class="content">
-      <div class="field">
-        <div class="label">Application</div>
-        <div class="value">${escapeHtml(alert.appName)}</div>
-      </div>
-      <div class="field">
-        <div class="label">Date & Time</div>
-        <div class="value">${timestamp}</div>
-      </div>
-      <div class="field">
-        <div class="label">Blocked URL</div>
-        <div class="value">${escapeHtml(alert.url)}</div>
-      </div>
-      <div class="field">
-        <div class="label">Hostname</div>
-        <div class="value">${escapeHtml(alert.hostname)}</div>
-      </div>
-      ${alert.appVersion ? `
-      <div class="field">
-        <div class="label">App Version</div>
-        <div class="value">${escapeHtml(alert.appVersion)}</div>
-      </div>
-      ` : ''}
-      ${alert.stack ? `
-      <div class="field">
-        <div class="label">Stack Trace</div>
-        <div class="value stack">${escapeHtml(alert.stack)}</div>
-      </div>
-      ` : ''}
-      ${alert.metadata ? `
-      <div class="field">
-        <div class="label">Additional Details</div>
-        <div class="value"><pre>${escapeHtml(JSON.stringify(alert.metadata, null, 2))}</pre></div>
-      </div>
-      ` : ''}
-    </div>
-  </div>
-</body>
-</html>
-  `.trim();
-}
-
-/**
- * Escape HTML special characters to prevent XSS in email templates.
- *
- * Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
- *
- * @param str - The raw string to escape.
- * @returns The HTML-safe escaped string.
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
