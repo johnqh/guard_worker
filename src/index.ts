@@ -1,38 +1,58 @@
 /**
- * Security Guard Worker
+ * @fileoverview Security Guard Worker - Cloudflare Worker for security alerts.
  *
- * Receives security alerts and CSP violation reports,
- * sends email notifications via SendGrid.
- *
- * App registry: Configure recipient emails in wrangler.toml
- * as APP_<APPNAME>_EMAIL environment variables.
+ * Receives security alerts and CSP (Content Security Policy) violation reports
+ * from client-side applications, then sends formatted HTML email notifications
+ * to the appropriate team via the SendGrid API. Routes alerts based on a
+ * configurable app registry defined in wrangler.toml environment variables.
  */
 
+/** Environment bindings for the Cloudflare Worker. */
 interface Env {
+  /** SendGrid API key for sending email notifications. Set via `wrangler secret put`. */
   SENDGRID_API_KEY: string;
+  /** Sender email address for outbound notifications. */
   FROM_EMAIL: string;
-  [key: string]: string; // App registry: APP_<APPNAME>_EMAIL
+  /** Dynamic app registry: APP_<APPNAME>_EMAIL entries for routing alerts. */
+  [key: string]: string;
 }
 
+/** Security alert payload sent by client-side interceptors. */
 interface SecurityAlert {
+  /** Name of the application that generated the alert. */
   appName: string;
+  /** Type of security violation detected. */
   type: 'unauthorized_fetch' | 'unauthorized_xhr' | 'unauthorized_websocket' | 'csp_violation';
+  /** The URL that was blocked or flagged. */
   url: string;
+  /** Hostname extracted from the blocked URL. */
   hostname: string;
+  /** Unix timestamp (ms) when the alert was generated. */
   timestamp: number;
+  /** Optional stack trace from the interceptor. */
   stack?: string;
+  /** Optional application version string. */
   appVersion?: string;
+  /** Optional user agent string from the browser. */
   userAgent?: string;
+  /** Optional additional context as key-value pairs. */
   metadata?: Record<string, unknown>;
 }
 
+/** CSP violation report payload as sent by browsers. */
 interface CspReport {
   'csp-report': {
+    /** URI of the document where the violation occurred. */
     'document-uri': string;
+    /** The CSP directive that was violated. */
     'violated-directive': string;
+    /** URI of the resource that was blocked. */
     'blocked-uri': string;
+    /** The full original CSP policy string. */
     'original-policy'?: string;
+    /** Source file where the violation occurred. */
     'source-file'?: string;
+    /** Line number in the source file. */
     'line-number'?: number;
   };
 }
@@ -45,6 +65,16 @@ const corsHeaders = {
 };
 
 export default {
+  /**
+   * Main fetch handler for the Cloudflare Worker.
+   *
+   * Routes incoming requests to the appropriate handler based on HTTP method
+   * and URL path. All responses include CORS headers.
+   *
+   * @param request - The incoming HTTP request.
+   * @param env - Environment bindings (secrets and variables from wrangler.toml).
+   * @returns HTTP response with JSON body or 204 for CSP reports.
+   */
   async fetch(request: Request, env: Env): Promise<Response> {
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -88,7 +118,14 @@ export default {
 };
 
 /**
- * Handle security alerts from client-side interceptors
+ * Handle security alerts from client-side interceptors.
+ *
+ * Parses the alert JSON body, resolves the recipient email from the app
+ * registry, formats an HTML email, and sends it via SendGrid.
+ *
+ * @param request - The incoming POST request containing a SecurityAlert JSON body.
+ * @param env - Environment bindings with app registry and SendGrid credentials.
+ * @returns JSON response with `{ success: boolean }` and appropriate status code.
  */
 async function handleSecurityAlert(request: Request, env: Env): Promise<Response> {
   const alert: SecurityAlert = await request.json();
@@ -131,7 +168,16 @@ async function handleSecurityAlert(request: Request, env: Env): Promise<Response
 }
 
 /**
- * Handle CSP violation reports from browser
+ * Handle CSP violation reports from browser.
+ *
+ * Parses the CSP report JSON, determines the app name from query params
+ * or by inferring from the document URI, then sends an email notification.
+ * Always returns 204 as browsers expect this for CSP report endpoints.
+ *
+ * @param request - The incoming POST request containing a CspReport JSON body.
+ * @param env - Environment bindings with app registry and SendGrid credentials.
+ * @param url - Parsed URL of the request (for query parameter extraction).
+ * @returns 204 No Content response (required by CSP reporting spec).
  */
 async function handleCspReport(request: Request, env: Env, url: URL): Promise<Response> {
   const report: CspReport = await request.json();
@@ -177,7 +223,14 @@ async function handleCspReport(request: Request, env: Env, url: URL): Promise<Re
 }
 
 /**
- * Get recipient email from app registry
+ * Get recipient email from the app registry.
+ *
+ * Normalizes the app name by uppercasing and replacing hyphens with underscores,
+ * then looks up `APP_<NORMALIZED>_EMAIL` in the environment bindings.
+ *
+ * @param appName - The application name from the alert payload.
+ * @param env - Environment bindings containing APP_*_EMAIL entries.
+ * @returns The recipient email address, or undefined if not registered.
  */
 function getRecipientEmail(appName: string, env: Env): string | undefined {
   // Normalize app name: mail_box_wallet -> MAIL_BOX_WALLET
@@ -187,7 +240,14 @@ function getRecipientEmail(appName: string, env: Env): string | undefined {
 }
 
 /**
- * Try to infer app name from document URI
+ * Try to infer app name from a CSP document URI.
+ *
+ * Uses heuristics to map known domains and protocols to app names:
+ * - `signic.email` hostnames map to `mail_box`
+ * - `chrome-extension:` protocol maps to `mail_box_wallet`
+ *
+ * @param documentUri - The document-uri field from the CSP report.
+ * @returns The inferred app name, or undefined if no match.
  */
 function inferAppName(documentUri: string): string | undefined {
   try {
@@ -205,7 +265,12 @@ function inferAppName(documentUri: string): string | undefined {
 }
 
 /**
- * Extract hostname from URL
+ * Extract hostname from a URL string.
+ *
+ * Falls back to returning the original string if URL parsing fails.
+ *
+ * @param urlString - The URL to extract the hostname from.
+ * @returns The hostname portion of the URL, or the original string on failure.
  */
 function extractHostname(urlString: string): string {
   try {
@@ -217,7 +282,11 @@ function extractHostname(urlString: string): string {
 }
 
 /**
- * Send email via SendGrid API
+ * Send an HTML email via the SendGrid v3 API.
+ *
+ * @param env - Environment bindings containing SENDGRID_API_KEY and FROM_EMAIL.
+ * @param options - Email options including recipient, subject, and HTML body.
+ * @returns True if the email was sent successfully, false otherwise.
  */
 async function sendEmail(
   env: Env,
@@ -251,7 +320,13 @@ async function sendEmail(
 }
 
 /**
- * Format security alert as HTML email
+ * Format a security alert as a styled HTML email.
+ *
+ * Generates a full HTML document with inline CSS containing alert details.
+ * All user-supplied values are passed through `escapeHtml()` to prevent XSS.
+ *
+ * @param alert - The security alert data to format.
+ * @returns Complete HTML document string ready for email delivery.
  */
 function formatSecurityAlertEmail(alert: SecurityAlert): string {
   const timestamp = new Date(alert.timestamp).toISOString();
@@ -320,7 +395,12 @@ function formatSecurityAlertEmail(alert: SecurityAlert): string {
 }
 
 /**
- * Escape HTML special characters
+ * Escape HTML special characters to prevent XSS in email templates.
+ *
+ * Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
+ *
+ * @param str - The raw string to escape.
+ * @returns The HTML-safe escaped string.
  */
 function escapeHtml(str: string): string {
   return str

@@ -5,7 +5,7 @@
 `guard_worker` is a Cloudflare Worker that receives security alerts and CSP (Content Security Policy) violation reports from client-side applications, then sends formatted HTML email notifications to the appropriate team via the SendGrid API. It acts as a centralized security monitoring endpoint for multiple apps, routing alerts based on a configurable app registry.
 
 - **Package name**: `guard_worker`
-- **Version**: `1.0.1`
+- **Version**: `1.0.2`
 - **License**: Private (not published to npm)
 - **Package manager**: Bun (`bun install`, `bun run <script>`)
 
@@ -94,6 +94,19 @@ interface Env {
 }
 ```
 
+### Internal Functions
+
+| Function | Purpose |
+|----------|---------|
+| `handleSecurityAlert(request, env)` | Parses alert JSON, resolves recipient, sends email |
+| `handleCspReport(request, env, url)` | Parses CSP report, infers app name, sends email |
+| `getRecipientEmail(appName, env)` | Normalizes app name and looks up `APP_<NAME>_EMAIL` |
+| `inferAppName(documentUri)` | Heuristic app detection from CSP document URI |
+| `extractHostname(urlString)` | Safe hostname extraction with URL parsing fallback |
+| `sendEmail(env, options)` | Sends HTML email via SendGrid v3 API |
+| `formatSecurityAlertEmail(alert)` | Generates styled HTML email body |
+| `escapeHtml(str)` | Escapes `& < > " '` for safe HTML insertion |
+
 ## Development Commands
 
 ```bash
@@ -153,6 +166,15 @@ Tests use Vitest with mocked `global.fetch` to intercept SendGrid API calls. The
 - Error handling (invalid JSON, SendGrid failures, missing API key)
 - App name normalization (hyphens, mixed case)
 
+### TypeScript Configuration
+
+- Target: ES2022, Module: ESNext
+- Module resolution: bundler
+- Strict mode enabled
+- Types: `@cloudflare/workers-types` (no DOM or Node.js types)
+- `noEmit: true` (Wrangler handles bundling)
+- `isolatedModules: true` for compatibility with bundlers
+
 ## Common Tasks
 
 ### Adding a New App
@@ -196,12 +218,12 @@ wrangler secret put SENDGRID_API_KEY
 
 ### Dev Dependencies (no runtime dependencies)
 
-| Package | Purpose |
-|---------|---------|
-| `@cloudflare/workers-types` (^4.20241230.0) | TypeScript type definitions for Cloudflare Worker APIs |
-| `typescript` (^5.7.2) | TypeScript compiler (noEmit -- bundled by Wrangler) |
-| `vitest` (^3.2.4) | Test framework |
-| `wrangler` (^3.99.0) | Cloudflare CLI for local dev, deployment, and secret management |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@cloudflare/workers-types` | ^4.20241230.0 | TypeScript type definitions for Cloudflare Worker APIs |
+| `typescript` | ^5.7.2 | TypeScript compiler (noEmit -- bundled by Wrangler) |
+| `vitest` | ^3.2.4 | Test framework |
+| `wrangler` | ^3.99.0 | Cloudflare CLI for local dev, deployment, and secret management |
 
 ### External Services
 
@@ -218,3 +240,11 @@ wrangler secret put SENDGRID_API_KEY
 4. **HTML escaping required** -- All user-supplied values in email templates must pass through `escapeHtml()`.
 5. **CORS on all responses** -- Every response must include the `corsHeaders` for cross-origin compatibility.
 6. **Private project** -- Not published to npm; `"private": true` in package.json.
+
+## Gotchas
+
+- **No `verify` script** -- Unlike other projects, there is no `bun run verify`. Run `bun run test` before deploying.
+- **No lint or typecheck scripts** -- TypeScript checking is done implicitly by Wrangler during dev/deploy.
+- **`userAgent` field in SecurityAlert is accepted but not displayed** -- The field exists in the interface but `formatSecurityAlertEmail()` does not render it.
+- **CSP reports always return 204** -- Even when the app is unknown or email sending fails, CSP reports return 204 (browsers expect this).
+- **`compatibility_date` is `2024-12-30`** -- This pins the Cloudflare Workers runtime behavior to that date.
