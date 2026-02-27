@@ -2,3 +2,6 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+
+# Claude Code local settings
+.claude/settings.local.json
