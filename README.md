@@ -13,7 +13,7 @@ Cloudflare Worker that receives security alerts and CSP violation reports, then 
 
 1. Install dependencies:
    ```bash
-   npm install
+   bun install
    ```
 
 2. Set SendGrid API key:
@@ -28,13 +28,15 @@ Cloudflare Worker that receives security alerts and CSP violation reports, then 
 
 4. Deploy:
    ```bash
-   npm run deploy
+   bun run deploy
    ```
 
 ## Development
 
 ```bash
-npm run dev
+bun run dev            # Start local development server
+bun run test           # Run tests (vitest)
+bun run tail           # View real-time production logs
 ```
 
 ## Usage
