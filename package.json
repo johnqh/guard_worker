@@ -1,6 +1,6 @@
 {
   "name": "guard_worker",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -28,5 +28,10 @@
     "typescript": "^5.7.2",
     "vitest": "^3.2.4",
     "wrangler": "^3.99.0"
+  },
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/johnqh/guard_worker.git"
   }
 }
