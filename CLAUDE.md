@@ -1,5 +1,10 @@
 # guard_worker - AI Development Guide
 
+> **Git policy — never auto-commit or auto-push.** Leave your work in the working tree.
+> Run `git commit`, `git push`, `gh pr create`, or `scripts/push_all.sh` **only when the user
+> explicitly asks in that turn**. Approval for an earlier change does not carry forward, and
+> finishing a task is not permission to commit it.
+
 ## Overview
 
 `guard_worker` is a Cloudflare Worker that receives security alerts and CSP (Content Security Policy) violation reports from client-side applications, then sends formatted HTML email notifications to the appropriate team via the SendGrid API. It acts as a centralized security monitoring endpoint for multiple apps, routing alerts based on a configurable app registry.
@@ -248,3 +253,7 @@ wrangler secret put SENDGRID_API_KEY
 - **`userAgent` field in SecurityAlert is accepted but not displayed** -- The field exists in the interface but `formatSecurityAlertEmail()` does not render it.
 - **CSP reports always return 204** -- Even when the app is unknown or email sending fails, CSP reports return 204 (browsers expect this).
 - **`compatibility_date` is `2024-12-30`** -- This pins the Cloudflare Workers runtime behavior to that date.
+
+## Git Workflow
+
+- Do not use feature branches for code changes. Always stay on the current branch.
