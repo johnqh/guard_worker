@@ -1,6 +1,6 @@
 {
   "name": "guard_worker",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,17 +17,17 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json}\""
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241230.0",
-    "@eslint/js": "^9.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "eslint": "^9.0.0",
-    "eslint-config-prettier": "^10.0.0",
-    "eslint-plugin-prettier": "^5.0.0",
-    "prettier": "^3.0.0",
-    "typescript": "^5.7.2",
-    "vitest": "^3.2.4",
-    "wrangler": "^3.99.0"
+    "@cloudflare/workers-types": "~4.20260702.1",
+    "@eslint/js": "~9.39.5",
+    "@typescript-eslint/eslint-plugin": "~8.72.0",
+    "@typescript-eslint/parser": "~8.72.0",
+    "eslint": "~9.39.5",
+    "eslint-config-prettier": "~10.1.8",
+    "eslint-plugin-prettier": "~5.5.7",
+    "prettier": "~3.9.10",
+    "typescript": "~5.9.3",
+    "vitest": "~3.2.7",
+    "wrangler": "~3.114.17"
   },
   "license": "BUSL-1.1",
   "repository": {
